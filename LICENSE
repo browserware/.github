@@ -1,0 +1,14 @@
+# Browserware Licensing
+
+Open source components in the Browserware organization are dual licensed under both:
+
+- **MIT License** ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
+- **Apache License, Version 2.0** ([LICENSE-APACHE](LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
+
+You may choose either license for your use.
+
+## Which License Should I Use?
+
+Both licenses are permissive open source licenses. The Apache 2.0 license includes an explicit patent grant, while the MIT license is shorter and simpler.
+
+For most purposes, either license works fine. Choose the one that best fits your project's needs.
