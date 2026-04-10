@@ -20,11 +20,17 @@ Repo: browserware/browserware
 ## Edge Cases
 
 - Chrome-family fixtures with multiple profile directories and profile display names.
-- Firefox `profiles.ini` fixtures with relative and absolute paths.
+- Firefox `profiles.ini` fixtures with multiple profiles and missing or malformed sections.
 - Browsers with no profile support, such as default-only Safari-style contexts.
 - Inaccessible, encrypted, malformed, or unknown profile metadata returns capability limitations instead of panicking or silently omitting contexts.
 - Empty/no-context discovery exits successfully with a clear message.
 - Ambiguous selectors produce deterministic behavior under each configured ambiguity policy.
+
+## Firefox Note
+
+- Current Firefox discovery only reads `Name=` entries from `profiles.ini`.
+- `Path=` and `IsRelative=` are not used yet, so relative-path and absolute-path fixtures are not distinct behavior in this milestone.
+- If path-aware Firefox profile resolution is added later, add dedicated fixtures and tests for relative and absolute path handling then.
 
 ## Critical Paths
 
