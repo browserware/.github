@@ -34,7 +34,8 @@ A developer who finds the repo today can enumerate contexts but cannot act on th
 1. PR2's primary output is `brw open <url> --context <selector>` — explicit, deterministic launch into a known context.
 2. The launch abstraction belongs in `browserware-launch`, not in the CLI. The crate boundary is: CLI resolves the context, launch executes the OS command.
 3. Profile targeting is family-specific: `--profile-directory` for Chromium, `-P` for Firefox, nothing for WebKit/Other.
-4. Ambiguity policy (`--on-ambiguous first|warn|error`) is surfaced as a CLI flag, defaulting to `warn` (noisier than `first`, less strict than `error`).
+4. Context selectors are **intentionally partial** — users specify only what they know (family, browser name, or profile display name). Partial selectors matching multiple contexts are not errors. `AmbiguityPolicy::First` is the correct default for user-facing commands. `--on-ambiguous` flag deferred to PR3.
+4a. `ContextSelector.profile` must match against **both** `profile.id` (internal directory name) and `profile.display_name` (user-visible name). Matching is **case-insensitive** — users read display names from `brw contexts` and type them; exact case should not matter. Directory names are opaque to them.
 5. Not-launchable contexts (capability.launchable = false) are rejected with a clear error that shows the limitations array.
 6. Rules engine integration is NOT in PR2. Routing to a context by URL pattern is PR3 or later.
 
@@ -484,7 +485,7 @@ ENG DUAL VOICES — CONSENSUS TABLE:
 | 2 | macOS: use `-b` not `-a` for bundle ID | Use `open -b <bundle_id>` | P5 (correct semantics) |
 | 3 | macOS: URL ordering before `--args` | URL args before `--args` separator | P1 (correctness) |
 | 4 | `brw open` fallback owner | Add `pub fn open_default(urls: &[Url]) -> Result<()>` to `browserware-system` | P5 (explicit boundary) |
-| 5 | Ambiguity policy for `brw open` | Use `AmbiguityPolicy::Error` (not `Warn`) — launch is a side effect, not read-only | P5 (explicit) |
+| 5 | Ambiguity policy for `brw open` | Use `AmbiguityPolicy::First` — selectors are intentionally partial; users specify only what they know (family, browser, or profile name). `First` was the original design intent. `Error` would break `--context chrome`, `--context chromium`, etc. | P5 (explicit) |
 | 6 | `LaunchError::ContextNotFound` | REMOVE — wrong crate boundary; CLI owns "no match" error | P5 |
 | 7 | URL batching | Single `launch(context, &all_urls)` call — opens all URLs in one command invocation (multiple tabs) | P1 |
 | 8 | CLI test injection | Expose `pub(crate) fn open_context(contexts: &[BrowserContext], selector: &str, urls: &[Url], dry_run: bool) -> Result<()>` — testable without live detection | P5 |
@@ -495,9 +496,9 @@ ENG DUAL VOICES — CONSENSUS TABLE:
 CLI (brw open)
   ├─ ContextSelector::parse(selector)
   ├─ discover_contexts()           ← reuse from contexts module
-  ├─ selector.select(&contexts, AmbiguityPolicy::Error)
-  │   ├─ exact match → &BrowserContext
-  │   └─ no match / ambiguous → Err with candidate list
+  ├─ selector.select(&contexts, AmbiguityPolicy::First)
+  │   ├─ exact or first-of-partial match → &BrowserContext
+  │   └─ no match → Ok(None) → bail with "no context matches" + hint
   ├─ browserware_launch::launch(context, &all_urls)
   │   ├─ check capability.launchable → LaunchError::NotLaunchable
   │   ├─ build_command(context, urls)
@@ -596,7 +597,7 @@ Same cost as PR1 (`discover_contexts()` per invocation). No regression.
 | URL ordering before `--args` in macOS `open` | CRITICAL | Fixed in plan — URLs precede `--args` |
 | Firefox `--no-remote` flag needed alongside `--profile` | HIGH | Add to `firefox_args()` |
 | `LaunchError::ContextNotFound` wrong boundary | HIGH | Remove from error enum |
-| `AmbiguityPolicy::Error` for `brw open` (not `Warn`) | HIGH | Fixed in plan |
+| `AmbiguityPolicy::First` for `brw open` (partial selectors are intentional) | HIGH | Fixed in plan — ~~Error~~ was wrong; selectors are intentionally partial |
 | `browserware-system::open_default()` | HIGH | Add to PR2 scope |
 | URL batching: single `launch()` call | MEDIUM | Fixed in plan |
 | CLI test injection seam | MEDIUM | Expose `open_context()` helper |
@@ -615,7 +616,7 @@ Same cost as PR1 (`discover_contexts()` per invocation). No regression.
 | 9 | Eng | macOS: use `open -b <bundle_id>` not `-a` | Mechanical | P5 | `-a` takes name/path; `-b` takes bundle ID — correct semantics | Use `-a` |
 | 10 | Eng | URLs before `--args` in macOS open | Mechanical | P1 | Correctness — `--args` separates app flags from open flags | Any order |
 | 11 | Eng | `browserware-system::open_default()` for no-context fallback | Mechanical | P5 | Clear crate boundary; `system` owns OS integration | Put in CLI |
-| 12 | Eng | `AmbiguityPolicy::Error` for `brw open` (not `Warn`) | Mechanical | P5 | Launch is a side effect; explicit failure > silent pick | Warn |
+| 12 | Eng | ~~`AmbiguityPolicy::Error`~~ → `AmbiguityPolicy::First` for `brw open` | **CORRECTED** | P5 | Selectors are intentionally partial — `--context chrome`, `--context chromium`, `--context Work` must work. `Error` breaks the partial-selector UX. `First` was the original design intent. | Error |
 | 13 | Eng | Remove `LaunchError::ContextNotFound` | Mechanical | P5 | Wrong crate boundary; CLI owns "no match" | Keep |
 | 14 | Eng | Single `launch(context, &all_urls)` call | Mechanical | P1 | Opens multiple tabs in one session | Per-URL calls |
 | 15 | Eng | Expose `open_context()` helper for CLI tests | Mechanical | P5 | Testable without live detection | Private only |
@@ -740,7 +741,7 @@ Examples:
 
 | # | Decision | Classification | Principle |
 |---|----------|----------------|-----------|
-| 16 | Fix scope section to match accepted decisions (--dry-run, no --on-ambiguous, AmbiguityPolicy::Error) | Mechanical | P5 |
+| 16 | Fix scope section to match accepted decisions (--dry-run, no --on-ambiguous, AmbiguityPolicy::First) | Mechanical | P5 |
 | 17 | Add README "Getting Started" section as PR2 deliverable | Mechanical | P1 |
 | 18 | Mandate "hint:" line on every error message from brw open | Mechanical | P1 |
 | 19 | `open_context()` return type: `anyhow::Result<()>` | Mechanical | P5 |
@@ -762,6 +763,7 @@ Examples:
 | 19 | DX | `open_context()` return `anyhow::Result<()>` | Mechanical | P5 | Consistent with CLI error handling | Custom enum |
 | 20 | DX | System launcher loops per-URL | Mechanical | P1 | `open`/`xdg-open`/`start` take one URL | Batch attempt |
 | 21 | DX | CHANGELOG: 0.3.0 entry with --context + --browser deprecation | Mechanical | P1 | Trust + upgrade path | Skip |
+| 23 | QA post-impl | macOS + bundle_id + profile present: use direct executable, not `open -b --args` | Mechanical | P1 (correctness) | `open -b --args` silently drops `--args` when the app is already running (macOS forwards URL via Apple Events and strips launch flags); Chromium IPC correctly forwards `--profile-directory` when invoked directly. No-profile launches keep `open -b` for Gatekeeper safety. | Keep `open -b --args` for all profile launches |
 
 
 ---
@@ -783,14 +785,14 @@ Flagged in Phase 1 by both CEO voices. The PR description must say: "This PR imp
 
 | Review | Trigger | Why | Runs | Status | Findings |
 |--------|---------|-----|------|--------|----------|
-| CEO Review | Phase 1 | Scope & strategy | 1 | issues_open | 6 decisions auto-decided; 1 user challenge resolved |
-| Codex Review (CEO) | Phase 1 | Independent 2nd opinion | 1 | issues_open | 7 findings; 6 confirmed cross-model |
-| Eng Review | Phase 3 | Architecture & tests | 1 | issues_open | 10 structural gaps; 9 auto-decided |
-| Codex Review (Eng) | Phase 3 | Independent 2nd opinion | 1 | issues_open | 7 findings; all confirmed or improved |
-| DX Review | Phase 3.5 | Developer experience | 1 | issues_open | 8 gaps; all auto-decided; score 4→7/10 |
+| CEO Review | Phase 1 + post-impl | Scope & strategy | 2 | issues_open | 6 decisions auto-decided; 2 post-impl amendments validated; case-insensitive profile matching added |
+| Codex Review (CEO) | Phase 1 + post-impl | Independent 2nd opinion | 2 | issues_open | 7 findings Phase 1; 6 findings post-impl (2 acted on: case-insensitive matching, silent First documented) |
+| Eng Review | Phase 3 + post-impl | Architecture & tests | 2 | cleared | Phase 3: 10 structural gaps, 9 auto-decided; post-impl: 3 findings (README `;` bug fixed, no-match test added, dead with_context noted) |
+| Codex Review (Eng) | Phase 3 | Independent 2nd opinion | 1 | cleared | 7 findings; all confirmed or improved |
+| DX Review | Phase 3.5 + post-impl | Developer experience | 2 | issues_open | 8 gaps auto-decided; post-impl: stale text fixed, doc comment fixed |
 | Codex Review (DX) | Phase 3.5 | Independent 2nd opinion | 1 | issues_open | 6 findings; all confirmed cross-model |
 
-**VERDICT:** 22 decisions auto-decided. 0 unresolved blockers. 1 taste decision for final gate. Plan is ready to implement after approval.
+**VERDICT:** 23 decisions auto-decided (decision #23 added post-QA). 0 unresolved blockers. Post-implementation amendments validated. Case-insensitive profile matching added (CEO review round 2). Eng post-impl review: README separator bug fixed (`';'` → `chrome:Default` alias), no-match test added (138 tests total), dead code noted. QA post-impl: macOS `open -b --args` silently drops profile flags when Chrome is already running — fixed by using direct executable for all profile-targeted Chromium launches on macOS; design doc and Final Canonical Scope updated. **CLEARED TO SHIP.**
 
 
 ---
@@ -825,6 +827,7 @@ This is the honest, correct behavior for the current product stage.
 
 **`browserware-types`:**
 - `ProfileRef.path: Option<PathBuf>` with `#[serde(default, skip_serializing_if = "Option::is_none")]`
+- `ContextSelector::matches()` — profile field must match against **both** `profile.id` (internal directory name, e.g. `"Profile 1"`) and `profile.display_name` (user-visible name, e.g. `"Work"`). Matching is **case-insensitive** — `chrome:work` must resolve to a profile with `display_name="Work"`. Users see and type display names; directory names are opaque. `chrome:Work` must resolve even when the underlying directory is `Profile 1`.
 
 **`browserware-profiles`:**
 - Firefox parser: read `Path=` + `IsRelative=` → compute absolute profile path
@@ -834,7 +837,8 @@ This is the honest, correct behavior for the current product stage.
 - `pub fn launch(context: &BrowserContext, urls: &[Url]) -> Result<()>`
 - `pub fn build_command(context: &BrowserContext, urls: &[Url]) -> std::process::Command` (pub for testing)
 - Error: `LaunchError::NotLaunchable { limitations }`, `LaunchError::ExecutableNotFound { path }`, `LaunchError::ProcessFailed { status }`, `LaunchError::EmptyUrls`
-- macOS: `open -b <bundle_id> <url...> --args <profile_flags>` when `bundle_id` present
+- macOS + bundle_id, no profile args: `open -b <bundle_id> <url...>` — Gatekeeper-safe URL-only opens (Safari, Chromium without a profile)
+- macOS + bundle_id, profile args present: **direct executable** (not `open -b`) — macOS forwards the URL via Apple Events when the app is already running and silently drops `--args`, so `--profile-directory` would be ignored; Chromium's own IPC correctly forwards `--profile-directory` to an existing instance when invoked directly
 - Chromium profile: `--profile-directory=<id>` (joined, single arg)
 - Firefox profile: `--profile <abs_path> --no-remote`
 - Other/no profile: `exec <url...>`
@@ -845,7 +849,7 @@ This is the honest, correct behavior for the current product stage.
 - `--context <selector>`: optional selector string
 - `--dry-run`: print command, exit 0, no launch
 - No `--context` → print helpful error (see above), exit 1
-- `AmbiguityPolicy::Error` always
+- `AmbiguityPolicy::First` always — partial selectors are intentional design, not error conditions
 - Error format: "error: {what}\n  cause: {why}\n  hint: run `brw ...`"
 
 **`browserware-cli/src/commands/contexts.rs`:**
@@ -863,7 +867,7 @@ This is the honest, correct behavior for the current product stage.
 
 - `browserware-system::open_default()` — deferred (loop risk with future OS registration)
 - Rules engine routing — PR3
-- `--on-ambiguous` flag — PR3 (hardcoded Error for now)
+- `--on-ambiguous` flag — PR3 (hardcoded `First` — partial selectors are intentional design)
 - crates.io publishing — TODOS.md
 - GUI shim — long-term
 
